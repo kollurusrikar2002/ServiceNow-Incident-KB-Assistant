@@ -231,13 +231,27 @@ def create_search_query_from_incident(incident: Dict) -> str:
     ]
     return ' '.join([f for f in fields if f])
 
-def post_work_note(client, incident_sys_id: str, note: str):
-    """Post a work note to an incident"""
+def post_work_note(client, incident_sys_id: str, article_details: Dict):
+    """Post a work note to an incident with full KB article content"""
     try:
         incident_table = client.resource(api_path='/table/incident')
         
+        # Format the work note with full article content
+        note_content = f"""
+KB Article Reference:
+Number: {article_details['number']}
+Title: {article_details['short_description']}
+Relevance Score: {article_details['similarity']:.2f}
+Keywords: {article_details['keywords']}
+
+Article Content:
+{clean_html_content(article_details['original_text'])}
+
+(Added by KB Assistant)
+"""
+        
         update_payload = {
-            "work_notes": f"{note}\n(Added by KB Assistant)"
+            "work_notes": note_content
         }
         
         response = incident_table.update(
@@ -249,13 +263,22 @@ def post_work_note(client, incident_sys_id: str, note: str):
         st.error(f"Error posting work note: {str(e)}")
         return None
 
+def display_incident_details(incident: Dict):
+    """Display incident details in the UI"""
+    st.subheader("Current Incident Details")
+    st.write(f"Number: {incident.get('number')}")
+    st.write(f"Short Description: {incident.get('short_description')}")
+    
+    with st.expander("Full Description"):
+        st.write(incident.get('description', 'No description available'))
+
 def main():
     st.title("ServiceNow Incident KB Assistant")
     
     st.markdown("""
     This application helps support agents by:
     1. Finding relevant KB articles based on incident details
-    2. Posting the most relevant article to the incident's work notes
+    2. Posting the complete KB article content to the incident's work notes
     """)
     
     # Sidebar configuration
@@ -302,6 +325,9 @@ def main():
                     if incident:
                         st.session_state.current_incident = incident
                         
+                        # Display incident details
+                        display_incident_details(incident)
+                        
                         # Create search query from incident details
                         search_text = create_search_query_from_incident(incident)
                         results = search_articles(st.session_state.vector_store, search_text)
@@ -321,11 +347,15 @@ def main():
             st.subheader("Update Incident Work Notes")
             
             article = st.session_state.top_article
-            note_content = f"Suggested KB Article: {article['number']} - {article['short_description']}\n"
-            note_content += f"Relevance Score: {article['similarity']:.2f}\n"
-            note_content += f"Article Keywords: {article['keywords']}"
             
-            st.text_area("Content to Post", value=note_content, height=150)
+            # Preview the content that will be posted
+            with st.expander("Preview Work Note Content"):
+                st.markdown(f"**KB Article**: {article['number']}")
+                st.markdown(f"**Title**: {article['short_description']}")
+                st.markdown(f"**Relevance Score**: {article['similarity']:.2f}")
+                st.markdown(f"**Keywords**: {article['keywords']}")
+                st.markdown("**Article Content**:")
+                st.markdown(clean_html_content(article['original_text']))
             
             if st.button("Post to Work Notes"):
                 with st.spinner("Updating incident..."):
@@ -334,10 +364,10 @@ def main():
                         response = post_work_note(
                             client,
                             st.session_state.current_incident['sys_id'],
-                            note_content
+                            article
                         )
                         if response:
-                            st.success("Successfully updated work notes!")
+                            st.success("Successfully updated work notes with full article content!")
                             del st.session_state.top_article
 
 if __name__ == "__main__":
